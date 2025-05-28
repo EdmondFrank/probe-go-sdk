@@ -1,0 +1,39 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+
+# Output directories
+bin/
+build/
+dist/
+
+# Go build artifacts
+*.out
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Probe CLI binary (auto-downloaded)
+.probe/
+probe
+
+# Temporary files
+*.tmp
+*.log
+
+# Aider
+.aider*
+
+# Coverage
+coverage.*
