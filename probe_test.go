@@ -2,6 +2,7 @@ package probe
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"strings"
 )
@@ -192,6 +193,35 @@ func TestExtract_ContextLinesAndAllowTests(t *testing.T) {
 	}
 	if result == nil {
 		t.Error("Expected non-nil extract result")
+	}
+}
+
+func TestSearch_ComplexQuery(t *testing.T) {
+	if !IsProbeAvailable("") {
+		t.Skip("probe CLI not found in PATH; skipping integration test")
+	}
+	client := NewProbeClient("")
+
+	// Verify test path exists by checking current directory
+	testPath := "."
+	if _, err := os.Stat(filepath.Join(testPath, "probe_test.go")); os.IsNotExist(err) {
+		t.Skipf("Test files not found in %s; skipping test", testPath)
+	}
+
+	opts := SearchOptions{
+		Path:      testPath,
+		Query:     "func OR test OR package", // More likely to find matches in codebase
+		MaxTokens: 0,
+		Timeout:   0,
+		JSON:      true,
+	}
+
+	result, err := client.Search(opts)
+	if err != nil {
+		t.Errorf("Search failed: %v", err)
+	}
+	if result == nil {
+		t.Error("Expected non-nil search result")
 	}
 }
 
