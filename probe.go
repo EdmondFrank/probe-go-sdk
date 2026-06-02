@@ -190,6 +190,9 @@ func NewProbeClient(probePath string) *ProbeClient {
 			}
 		}
 	}
+	if os.Getenv("DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "probe path: %s\n", probePath)
+	}
 	return &ProbeClient{ProbePath: probePath}
 }
 
@@ -199,6 +202,11 @@ type Result map[string]interface{}
 // runProbeCommand runs the probe CLI with the given arguments and returns the parsed JSON output.
 // This function mimics the npm/src/cli.js logic: it ensures the probe binary exists and executes it with the provided args.
 func (c *ProbeClient) runProbeCommand(args ...string) (Result, error) {
+	return c.runProbeCommandInDir("", args...)
+}
+
+// runProbeCommandInDir runs the probe CLI in the given working directory (empty = inherit).
+func (c *ProbeClient) runProbeCommandInDir(cwd string, args ...string) (Result, error) {
 	// Ensure the probe binary exists
 	if _, err := exec.LookPath(c.ProbePath); err != nil {
 		return nil, fmt.Errorf("probe binary not found at path: %s", c.ProbePath)
@@ -208,6 +216,12 @@ func (c *ProbeClient) runProbeCommand(args ...string) (Result, error) {
 	cmd := exec.Command(c.ProbePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	if os.Getenv("DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "Executing: %s %s\n", c.ProbePath, strings.Join(args, " "))
+	}
 
 	// Capture stdout
 	out, err := cmd.Output()
@@ -220,6 +234,93 @@ func (c *ProbeClient) runProbeCommand(args ...string) (Result, error) {
 	if err := json.Unmarshal(out, &result); err != nil {
 		// If not JSON, return the raw output as a string in the "output" key
 		return Result{"output": strings.TrimSpace(string(out))}, nil
+	}
+	return result, nil
+}
+
+// runProbeCommandWithStdin runs the probe CLI, piping content to stdin, in the given working directory.
+func (c *ProbeClient) runProbeCommandWithStdin(content []byte, cwd string, args ...string) (Result, error) {
+	// Ensure the probe binary exists
+	if _, err := exec.LookPath(c.ProbePath); err != nil {
+		return nil, fmt.Errorf("probe binary not found at path: %s", c.ProbePath)
+	}
+
+	cmd := exec.Command(c.ProbePath, args...)
+	cmd.Stderr = os.Stderr
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	if os.Getenv("DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "Executing: %s %s\n", c.ProbePath, strings.Join(args, " "))
+	}
+
+	// Capture stdout via buffer
+	var stdoutBuf strings.Builder
+	cmd.Stdout = &stdoutBuf
+
+	// Pipe content to stdin
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
+
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start probe: %w", err)
+	}
+
+	// Write content and close stdin
+	if _, err := stdin.Write(content); err != nil {
+		return nil, fmt.Errorf("failed to write to stdin: %w", err)
+	}
+	stdin.Close()
+
+	// Wait for the command to finish
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("probe command failed: %w", err)
+	}
+
+	out := stdoutBuf.String()
+
+	// Try to parse as JSON, fallback to string
+	var result Result
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		return Result{"output": strings.TrimSpace(out)}, nil
+	}
+	return result, nil
+}
+
+// runProbeCommandArray runs the probe CLI and parses the output as a JSON array.
+// Used for commands like 'symbols' that return a top-level JSON array.
+func (c *ProbeClient) runProbeCommandArray(args ...string) ([]interface{}, error) {
+	return c.runProbeCommandArrayInDir("", args...)
+}
+
+// runProbeCommandArrayInDir runs the probe CLI in the given working directory and parses output as a JSON array.
+func (c *ProbeClient) runProbeCommandArrayInDir(cwd string, args ...string) ([]interface{}, error) {
+	// Ensure the probe binary exists
+	if _, err := exec.LookPath(c.ProbePath); err != nil {
+		return nil, fmt.Errorf("probe binary not found at path: %s", c.ProbePath)
+	}
+
+	cmd := exec.Command(c.ProbePath, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stderr = os.Stderr
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	if os.Getenv("DEBUG") == "1" {
+		fmt.Fprintf(os.Stderr, "Executing: %s %s\n", c.ProbePath, strings.Join(args, " "))
+	}
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to run probe: %w", err)
+	}
+
+	var result []interface{}
+	if err := json.Unmarshal(out, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse probe output as JSON array: %w", err)
 	}
 	return result, nil
 }

@@ -7,14 +7,15 @@ import (
 
 // QueryOptions defines options for a query operation.
 type QueryOptions struct {
-	Path         string   // Path to search in
-	Pattern      string   // The ast-grep pattern to search for
-	Language     string   // Programming language to search in
-	Ignore       []string // Patterns to ignore
-	AllowTests   bool     // Include test files
-	MaxResults   int      // Maximum number of results
-	Format       string   // Output format ('markdown', 'plain', 'json', 'color')
-	JSON         bool     // Return results as parsed JSON
+	Path        string   // Path to search in
+	Pattern     string   // The ast-grep pattern to search for
+	Language    string   // Programming language to search in
+	Ignore      []string // Patterns to ignore
+	AllowTests  bool     // Include test files
+	WithContext bool     // --with-context: include owning source-block context in JSON output
+	MaxResults  int      // Maximum number of results
+	Format      string   // Output format ('markdown', 'plain', 'json', 'color')
+	JSON        bool     // Return results as parsed JSON
 }
 
 // Query performs an AST-based pattern match using the probe CLI.
@@ -38,6 +39,9 @@ func (c *ProbeClient) Query(opts QueryOptions) (Result, error) {
 	if opts.AllowTests {
 		args = append(args, "--allow-tests")
 	}
+	if opts.WithContext {
+		args = append(args, "--with-context")
+	}
 	if opts.MaxResults > 0 {
 		args = append(args, "--max-results", fmt.Sprintf("%d", opts.MaxResults))
 	}
@@ -51,18 +55,20 @@ func (c *ProbeClient) Query(opts QueryOptions) (Result, error) {
 	args = append(args, opts.Pattern)
 	args = append(args, opts.Path)
 
-	// Log the query parameters (for debug parity with npm)
-	logMessage := fmt.Sprintf(`Query: pattern=%q path=%q`, opts.Pattern, opts.Path)
-	if opts.Language != "" {
-		logMessage += fmt.Sprintf(" language=%s", opts.Language)
+	// Log the query parameters only when DEBUG=1 (parity with npm)
+	if os.Getenv("DEBUG") == "1" {
+		logMessage := fmt.Sprintf(`Query: pattern=%q path=%q`, opts.Pattern, opts.Path)
+		if opts.Language != "" {
+			logMessage += fmt.Sprintf(" language=%s", opts.Language)
+		}
+		if opts.MaxResults > 0 {
+			logMessage += fmt.Sprintf(" maxResults=%d", opts.MaxResults)
+		}
+		if opts.AllowTests {
+			logMessage += " allowTests=true"
+		}
+		fmt.Fprintln(os.Stderr, logMessage)
 	}
-	if opts.MaxResults > 0 {
-		logMessage += fmt.Sprintf(" maxResults=%d", opts.MaxResults)
-	}
-	if opts.AllowTests {
-		logMessage += " allowTests=true"
-	}
-	fmt.Fprintln(os.Stderr, logMessage)
 
 	return c.runProbeCommand(args...)
 }

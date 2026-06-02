@@ -7,27 +7,29 @@ import (
 
 // SearchOptions defines options for a search operation.
 type SearchOptions struct {
-	Path             string   // Path to search in (like npm: path)
-	Query            string   // Search query or pattern (like npm: query)
-	FilesOnly        bool     // --files-only
-	Ignore           []string // --ignore
-	ExcludeFilenames bool     // --exclude-filenames
-	Reranker         string   // --reranker
-	FrequencySearch  bool     // --frequency
-	Exact            bool     // --exact
-	MaxResults       int      // --max-results
-	MaxBytes         int      // --max-bytes
-	MaxTokens        int      // --max-tokens
-	AllowTests       bool     // --allow-tests
-	NoMerge          bool     // --no-merge
-	MergeThreshold   int      // --merge-threshold
-	Session          string   // --session
-	Timeout          int      // --timeout
-	Language         string   // --language
-	Format           string   // --format
-	DryRun           bool     // --dry-run
-	BinaryOptions    map[string]interface{} // not used in Go, but for parity
-	JSON             bool     // Return results as parsed JSON
+	Path                string   // Path to search in (like npm: path)
+	Query               string   // Search query or pattern (like npm: query)
+	FilesOnly           bool     // --files-only
+	Ignore              []string // --ignore
+	ExcludeFilenames    bool     // --exclude-filenames
+	Reranker            string   // --reranker
+	FrequencySearch     bool     // --frequency
+	Exact               bool     // --exact
+	StrictElasticSyntax bool     // --strict-elastic-syntax
+	MaxResults          int      // --max-results
+	MaxBytes            int      // --max-bytes
+	MaxTokens           int      // --max-tokens
+	AllowTests          bool     // --allow-tests
+	NoMerge             bool     // --no-merge
+	MergeThreshold      int      // --merge-threshold
+	Session             string   // --session
+	Timeout             int      // --timeout
+	Language            string   // --language
+	Format              string   // --format
+	LSP                 bool     // --lsp
+	DryRun              bool     // --dry-run
+	BinaryOptions       map[string]interface{} // not used in Go, but for parity
+	JSON                bool     // Return results as parsed JSON
 }
 
 // Search performs a semantic code search using the probe CLI.
@@ -60,6 +62,9 @@ func (c *ProbeClient) Search(opts SearchOptions) (Result, error) {
 	if opts.Exact {
 		args = append(args, "--exact")
 	}
+	if opts.StrictElasticSyntax {
+		args = append(args, "--strict-elastic-syntax")
+	}
 	if opts.MaxResults > 0 {
 		args = append(args, "--max-results", fmt.Sprintf("%d", opts.MaxResults))
 	}
@@ -69,7 +74,7 @@ func (c *ProbeClient) Search(opts SearchOptions) (Result, error) {
 	if opts.MaxTokens > 0 {
 		args = append(args, "--max-tokens", fmt.Sprintf("%d", opts.MaxTokens))
 	} else {
-		args = append(args, "--max-tokens", "10000")
+		args = append(args, "--max-tokens", "20000")
 	}
 	if opts.AllowTests {
 		args = append(args, "--allow-tests")
@@ -98,6 +103,9 @@ func (c *ProbeClient) Search(opts SearchOptions) (Result, error) {
 	} else if opts.JSON {
 		args = append(args, "--format", "json")
 	}
+	if opts.LSP {
+		args = append(args, "--lsp")
+	}
 	if opts.DryRun {
 		args = append(args, "--dry-run")
 	}
@@ -106,26 +114,28 @@ func (c *ProbeClient) Search(opts SearchOptions) (Result, error) {
 	args = append(args, opts.Query)
 	args = append(args, opts.Path)
 
-	// Log the search parameters (for debug parity with npm)
-	logMessage := fmt.Sprintf("\nSearch: query=%q path=%q", opts.Query, opts.Path)
-	if opts.MaxResults > 0 {
-		logMessage += fmt.Sprintf(" maxResults=%d", opts.MaxResults)
+	// Log the search parameters only when DEBUG=1 (parity with npm)
+	if os.Getenv("DEBUG") == "1" {
+		logMessage := fmt.Sprintf("\nSearch: query=%q path=%q", opts.Query, opts.Path)
+		if opts.MaxResults > 0 {
+			logMessage += fmt.Sprintf(" maxResults=%d", opts.MaxResults)
+		}
+		logMessage += fmt.Sprintf(" maxTokens=%d", opts.MaxTokens)
+		logMessage += fmt.Sprintf(" timeout=%d", opts.Timeout)
+		if opts.AllowTests {
+			logMessage += " allowTests=true"
+		}
+		if opts.Language != "" {
+			logMessage += fmt.Sprintf(" language=%s", opts.Language)
+		}
+		if opts.Exact {
+			logMessage += " exact=true"
+		}
+		if opts.Session != "" {
+			logMessage += fmt.Sprintf(" session=%s", opts.Session)
+		}
+		fmt.Fprintln(os.Stderr, logMessage)
 	}
-	logMessage += fmt.Sprintf(" maxTokens=%d", opts.MaxTokens)
-	logMessage += fmt.Sprintf(" timeout=%d", opts.Timeout)
-	if opts.AllowTests {
-		logMessage += " allowTests=true"
-	}
-	if opts.Language != "" {
-		logMessage += fmt.Sprintf(" language=%s", opts.Language)
-	}
-	if opts.Exact {
-		logMessage += " exact=true"
-	}
-	if opts.Session != "" {
-		logMessage += fmt.Sprintf(" session=%s", opts.Session)
-	}
-	fmt.Fprintln(os.Stderr, logMessage)
 
 	return c.runProbeCommand(args...)
 }
