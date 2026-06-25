@@ -1,10 +1,12 @@
 package probe
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -585,4 +587,248 @@ func TestSymbols_ReturnType(t *testing.T) {
 	}
 	// result must be a []interface{}, length >= 0
 	_ = result // already typed as []interface{} by the compiler
+}
+
+// ---------------------------------------------------------------------------
+// Timeout behavior
+// ---------------------------------------------------------------------------
+
+func TestNewProbeClient_DefaultTimeout(t *testing.T) {
+	client := NewProbeClient("")
+	if client.Timeout != DefaultTimeout {
+		t.Errorf("expected default timeout %v, got %v", DefaultTimeout, client.Timeout)
+	}
+}
+
+func TestRunProbeCommand_TimeoutExceeded(t *testing.T) {
+	skipIfNoProbe(t)
+	client := newClient()
+	client.Timeout = 1 * time.Nanosecond
+	_, err := client.runProbeCommand("--help")
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("expected ErrTimeout, got: %v", err)
+	}
+}
+
+func TestRunProbeCommandWithStdin_TimeoutExceeded(t *testing.T) {
+	skipIfNoProbe(t)
+	client := newClient()
+	client.Timeout = 1 * time.Nanosecond
+	_, err := client.runProbeCommandWithStdin([]byte("test"), "", "extract")
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("expected ErrTimeout, got: %v", err)
+	}
+}
+
+func TestRunProbeCommandArray_TimeoutExceeded(t *testing.T) {
+	skipIfNoProbe(t)
+	client := newClient()
+	client.Timeout = 1 * time.Nanosecond
+	_, err := client.runProbeCommandArray("--help")
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("expected ErrTimeout, got: %v", err)
+	}
+}
+
+func TestVersion_TimeoutExceeded(t *testing.T) {
+	skipIfNoProbe(t)
+	client := newClient()
+	client.Timeout = 1 * time.Nanosecond
+	_, err := client.Version()
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("expected ErrTimeout, got: %v", err)
+	}
+}
+
+func TestTimeout_ZeroMeansNoTimeout(t *testing.T) {
+	skipIfNoProbe(t)
+	client := newClient()
+	client.Timeout = 0 // no timeout
+	_, err := client.runProbeCommand("--help")
+	if err != nil {
+		t.Fatalf("expected no error with Timeout=0, got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Timeout behavior – subcommands with real test data
+// ---------------------------------------------------------------------------
+
+// common test timeout: long enough for normal execution, short enough to test
+const testTimeout = 30 * time.Second
+
+// --- Search ---
+
+func TestSearch_TimeoutExceeded(t *testing.T) {
+	skipIfNoProbe(t)
+	client := newClient()
+	client.Timeout = 1 * time.Nanosecond
+	_, err := client.Search(SearchOptions{
+		Path:  ".",
+		Query: "func",
+		JSON:  true,
+	})
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("expected ErrTimeout, got: %v", err)
+	}
+}
+
+func TestSearch_WithTimeout(t *testing.T) {
+	skipIfNoProbe(t)
+	client := newClient()
+	client.Timeout = testTimeout
+	result, err := client.Search(SearchOptions{
+		Path:       ".",
+		Query:      "func",
+		MaxResults: 3,
+		JSON:       true,
+	})
+	if err != nil {
+		t.Fatalf("Search with timeout failed: %v", err)
+	}
+	if len(result) == 0 {
+		t.Error("expected non-empty search result")
+	}
+}
+
+// --- Query ---
+
+func TestQuery_TimeoutExceeded(t *testing.T) {
+	skipIfNoProbe(t)
+	client := newClient()
+	client.Timeout = 1 * time.Nanosecond
+	_, err := client.Query(QueryOptions{
+		Path:    ".",
+		Pattern: "func $F($A) { $B* }",
+		JSON:    true,
+	})
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("expected ErrTimeout, got: %v", err)
+	}
+}
+
+func TestQuery_WithTimeout(t *testing.T) {
+	skipIfNoProbe(t)
+	client := newClient()
+	client.Timeout = testTimeout
+	result, err := client.Query(QueryOptions{
+		Path:    ".",
+		Pattern: "func $F($A) { $B* }",
+		JSON:    true,
+	})
+	if err != nil {
+		t.Fatalf("Query with timeout failed: %v", err)
+	}
+	if len(result) == 0 {
+		t.Error("expected non-empty query result")
+	}
+}
+
+// --- Extract (Files) ---
+
+func TestExtract_TimeoutExceeded(t *testing.T) {
+	skipIfNoProbe(t)
+	const filename = "probe_test.go"
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		t.Skipf("%s not found; skipping", filename)
+	}
+	client := newClient()
+	client.Timeout = 1 * time.Nanosecond
+	_, err := client.Extract(ExtractOptions{
+		Files:  []string{filename},
+		Format: "json",
+		JSON:   true,
+	})
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("expected ErrTimeout, got: %v", err)
+	}
+}
+
+func TestExtract_WithTimeout(t *testing.T) {
+	skipIfNoProbe(t)
+	const filename = "probe_test.go"
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		t.Skipf("%s not found; skipping", filename)
+	}
+	client := newClient()
+	client.Timeout = testTimeout
+	result, err := client.Extract(ExtractOptions{
+		Files:  []string{filename},
+		Format: "json",
+		JSON:   true,
+	})
+	if err != nil {
+		t.Fatalf("Extract with timeout failed: %v", err)
+	}
+	if len(result) == 0 {
+		t.Error("expected non-empty extract result")
+	}
+}
+
+// --- Extract (Content / stdin) ---
+
+func TestExtract_ContentTimeoutExceeded(t *testing.T) {
+	skipIfNoProbe(t)
+	const filename = "probe_test.go"
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		t.Skipf("%s not found; skipping", filename)
+	}
+	client := newClient()
+	client.Timeout = 1 * time.Nanosecond
+	_, err := client.Extract(ExtractOptions{
+		Content: []byte(filename + "\n"),
+		JSON:    true,
+	})
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("expected ErrTimeout, got: %v", err)
+	}
+}
+
+func TestExtract_ContentWithTimeout(t *testing.T) {
+	skipIfNoProbe(t)
+	const filename = "probe_test.go"
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		t.Skipf("%s not found; skipping", filename)
+	}
+	client := newClient()
+	client.Timeout = testTimeout
+	result, err := client.Extract(ExtractOptions{
+		Content: []byte(filename + "\n"),
+		JSON:    true,
+	})
+	if err != nil {
+		t.Fatalf("Extract (content) with timeout failed: %v", err)
+	}
+	if len(result) == 0 {
+		t.Error("expected non-empty extract result")
+	}
+}
+
+// --- Symbols ---
+
+func TestSymbols_TimeoutExceeded(t *testing.T) {
+	skipIfSubcmdUnsupported(t, "symbols")
+	client := newClient()
+	client.Timeout = 1 * time.Nanosecond
+	_, err := client.Symbols(SymbolsOptions{
+		Files: []string{"probe.go"},
+	})
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("expected ErrTimeout, got: %v", err)
+	}
+}
+
+func TestSymbols_WithTimeout(t *testing.T) {
+	skipIfSubcmdUnsupported(t, "symbols")
+	client := newClient()
+	client.Timeout = testTimeout
+	result, err := client.Symbols(SymbolsOptions{
+		Files: []string{"probe.go"},
+	})
+	if err != nil {
+		t.Fatalf("Symbols with timeout failed: %v", err)
+	}
+	if len(result) == 0 {
+		t.Error("expected non-empty symbols result")
+	}
 }

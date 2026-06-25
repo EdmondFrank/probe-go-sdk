@@ -3,6 +3,7 @@
 package probe
 
 import (
+	"context"
 	"os/exec"
 	"fmt"
 	"os"
@@ -15,11 +16,45 @@ import (
 	"net/http"
 	"archive/tar"
 	"compress/gzip"
+	"time"
 )
+
+// DefaultTimeout is the default maximum duration for a single probe CLI invocation.
+const DefaultTimeout = 5 * time.Minute
+
+// ErrTimeout is returned when a probe CLI command exceeds its timeout.
+var ErrTimeout = fmt.Errorf("probe command timed out")
+
+// gracePeriod is the time given to the probe process to shut down gracefully
+// (after SIGTERM) before it is force-killed (SIGKILL).
+const gracePeriod = 5 * time.Second
 
 // ProbeClient is the main struct for interacting with the probe CLI.
 type ProbeClient struct {
-	ProbePath string // Path to the probe CLI binary
+	ProbePath string        // Path to the probe CLI binary
+	Timeout   time.Duration // Per-command timeout; 0 means no timeout (infinite)
+}
+
+// createContext returns a context that is cancelled after the client's timeout
+// (if configured). If Timeout is zero or negative, context.Background() is returned.
+func (c *ProbeClient) createContext() context.Context {
+	if c.Timeout <= 0 {
+		return context.Background()
+	}
+	ctx, _ := context.WithTimeout(context.Background(), c.Timeout)
+	return ctx
+}
+
+// applyCmdTimeout configures graceful process termination on context cancellation:
+// SIGTERM is sent first, and after gracePeriod the process is force-killed (SIGKILL).
+func applyCmdTimeout(cmd *exec.Cmd, ctx context.Context) {
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			_ = cmd.Process.Signal(os.Interrupt)
+		}
+		return os.ErrProcessDone
+	}
+	cmd.WaitDelay = gracePeriod
 }
 
 // getDefaultProbeBinDir returns the default bin directory for probe
@@ -193,7 +228,7 @@ func NewProbeClient(probePath string) *ProbeClient {
 	if os.Getenv("DEBUG") == "1" {
 		fmt.Fprintf(os.Stderr, "probe path: %s\n", probePath)
 	}
-	return &ProbeClient{ProbePath: probePath}
+	return &ProbeClient{ProbePath: probePath, Timeout: DefaultTimeout}
 }
 
 // Result is a generic result type for probe operations.
@@ -212,8 +247,10 @@ func (c *ProbeClient) runProbeCommandInDir(cwd string, args ...string) (Result, 
 		return nil, fmt.Errorf("probe binary not found at path: %s", c.ProbePath)
 	}
 
-	// Prepare the command
-	cmd := exec.Command(c.ProbePath, args...)
+	// Prepare the command with timeout context
+	ctx := c.createContext()
+	cmd := exec.CommandContext(ctx, c.ProbePath, args...)
+	applyCmdTimeout(cmd, ctx)
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 	if cwd != "" {
@@ -226,6 +263,9 @@ func (c *ProbeClient) runProbeCommandInDir(cwd string, args ...string) (Result, 
 	// Capture stdout
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, ErrTimeout
+		}
 		return nil, fmt.Errorf("failed to run probe: %w", err)
 	}
 
@@ -245,7 +285,9 @@ func (c *ProbeClient) runProbeCommandWithStdin(content []byte, cwd string, args 
 		return nil, fmt.Errorf("probe binary not found at path: %s", c.ProbePath)
 	}
 
-	cmd := exec.Command(c.ProbePath, args...)
+	ctx := c.createContext()
+	cmd := exec.CommandContext(ctx, c.ProbePath, args...)
+	applyCmdTimeout(cmd, ctx)
 	cmd.Stderr = os.Stderr
 	if cwd != "" {
 		cmd.Dir = cwd
@@ -266,17 +308,29 @@ func (c *ProbeClient) runProbeCommandWithStdin(content []byte, cwd string, args 
 
 	// Start the command
 	if err := cmd.Start(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, ErrTimeout
+		}
 		return nil, fmt.Errorf("failed to start probe: %w", err)
 	}
 
 	// Write content and close stdin
 	if _, err := stdin.Write(content); err != nil {
+		// If the process was already killed due to timeout, report that
+		if ctx.Err() == context.DeadlineExceeded {
+			cmd.Wait()
+			return nil, ErrTimeout
+		}
+		cmd.Wait()
 		return nil, fmt.Errorf("failed to write to stdin: %w", err)
 	}
 	stdin.Close()
 
 	// Wait for the command to finish
 	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, ErrTimeout
+		}
 		return nil, fmt.Errorf("probe command failed: %w", err)
 	}
 
@@ -303,7 +357,9 @@ func (c *ProbeClient) runProbeCommandArrayInDir(cwd string, args ...string) ([]i
 		return nil, fmt.Errorf("probe binary not found at path: %s", c.ProbePath)
 	}
 
-	cmd := exec.Command(c.ProbePath, args...)
+	ctx := c.createContext()
+	cmd := exec.CommandContext(ctx, c.ProbePath, args...)
+	applyCmdTimeout(cmd, ctx)
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 	if cwd != "" {
@@ -315,6 +371,9 @@ func (c *ProbeClient) runProbeCommandArrayInDir(cwd string, args ...string) ([]i
 
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return nil, ErrTimeout
+		}
 		return nil, fmt.Errorf("failed to run probe: %w", err)
 	}
 

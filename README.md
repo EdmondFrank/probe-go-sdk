@@ -9,6 +9,7 @@ A Go SDK for [probe](https://github.com/buger/probe) — an AI-native code intel
 - **Code Extraction** — pull exact code blocks from files, line ranges, or stdin
 - **Symbol Listing** — enumerate functions, types, and constants in files
 - **Auto-download** — fetches the probe binary automatically if not found on `$PATH`
+- **Timeout protection** — every probe invocation is bounded by a configurable timeout; processes are killed and reaped on expiry
 - **Debug logging** — set `DEBUG=1` for verbose probe path and command tracing
 
 ## Installation
@@ -171,6 +172,38 @@ v, err := client.Version()
 
 Returns `true` if the probe binary can be found at `probePath` (or on `$PATH` when empty).
 
+---
+
+### Timeout
+
+Every probe CLI invocation is bounded by a per-command timeout to protect system resources. When the timeout expires, the probe process receives `SIGTERM` (graceful shutdown). If it does not exit within 5 seconds, it is force-killed with `SIGKILL`. The child process is always reaped — no zombies are left behind.
+
+| Constant | Value | Description |
+|---|---|---|
+| `DefaultTimeout` | `5 * time.Minute` | Applied by `NewProbeClient` |
+| `ErrTimeout` | sentinel error | Returned when a command exceeds its timeout |
+
+```go
+client := probe.NewProbeClient("") // Timeout defaults to 5m
+
+// Override per-client
+client.Timeout = 30 * time.Second
+
+// Disable timeout entirely (Timeout == 0 means no deadline)
+client.Timeout = 0
+
+result, err := client.Search(probe.SearchOptions{...})
+if errors.Is(err, probe.ErrTimeout) {
+    // handle timeout — process was killed and cleaned up
+}
+```
+
+| `Timeout` value | Behavior |
+|---|---|
+| `DefaultTimeout` (default) | 5-minute deadline per command |
+| `> 0` | Custom deadline per command |
+| `0` | No timeout (infinite) |
+
 ## Debug Logging
 
 Set `DEBUG=1` to print diagnostic output to stderr:
@@ -198,9 +231,13 @@ A minimal CLI wrapper lives in `cli/`:
 
 ```bash
 cd cli
-go run main.go --mode search --path . --query "func"
-go run main.go --mode query  --path . --pattern "func $F($A) { $B* }"
+go run main.go --mode search  --path . --query "func"
+go run main.go --mode query   --path . --pattern "func $F($A) { $B* }"
 go run main.go --mode extract --files "main.go:1"
+go run main.go --mode symbols --files "main.go"
+
+# Set a per-command timeout (default 5m, 0 = no timeout)
+go run main.go --mode search --query "func" --timeout 30s
 ```
 
 ## Development

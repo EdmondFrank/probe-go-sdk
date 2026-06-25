@@ -1,6 +1,9 @@
 package probe
 
 import (
+	"context"
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -16,10 +19,22 @@ func IsProbeAvailable(probePath string) bool {
 
 // Version returns the version of the probe CLI.
 func (c *ProbeClient) Version() (string, error) {
-	cmd := exec.Command(c.ProbePath, "--version")
+	ctx := c.createContext()
+	cmd := exec.CommandContext(ctx, c.ProbePath, "--version")
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			_ = cmd.Process.Signal(os.Interrupt)
+		}
+		return os.ErrProcessDone
+	}
+	cmd.WaitDelay = gracePeriod
+
 	out, err := cmd.Output()
 	if err != nil {
-		return "", err
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", ErrTimeout
+		}
+		return "", fmt.Errorf("failed to get probe version: %w", err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
